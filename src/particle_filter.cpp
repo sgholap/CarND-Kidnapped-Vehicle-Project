@@ -30,8 +30,31 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
    * NOTE: Consult particle_filter.h for more information about this method 
    *   (and others in this file).
    */
-  num_particles = 0;  // TODO: Set the number of particles
-
+    num_particles = 5;  // Set the number of particle to 5
+    
+	// Initialize random device engine adding Gaussian noise.
+    std::random_device rd;
+    std::default_random_engine gen(rd());
+	
+	// Initialize normal distribution with standard deviation for x, y and theta.
+    std::normal_distribution<double> dist_x(x, std[0]);
+    std::normal_distribution<double> dist_y(y, std[1]);
+    std::normal_distribution<double> dist_theta(theta, std[2]);
+    
+	// Set vector to size of particle
+    particles.resize(num_particles);
+    weights.resize(num_particles);
+	
+    // Initialize particle with GPS value with randomness through Gaussian noise.
+	// Intialize weight to 1.
+    for (auto i = 0; i < num_particles; ++i) {
+        particles[i].x = dist_x(gen);
+        particles[i].y = dist_y(gen);
+        particles[i].weight = 1.;
+        particles[i].theta = dist_theta(gen);
+        weights[i] = 1.;
+    }
+    is_initialized = true;
 }
 
 void ParticleFilter::prediction(double delta_t, double std_pos[], 
@@ -44,6 +67,27 @@ void ParticleFilter::prediction(double delta_t, double std_pos[],
    *  http://www.cplusplus.com/reference/random/default_random_engine/
    */
 
+   std::random_device rd;
+   std::default_random_engine gen(rd());
+   for (auto i = 0; i < num_particles; i++) {
+        if (std::abs(yaw_rate) <= std::numeric_limits<double>::epsilon()) {
+            // If yaw_rate is too small ~0. It is no turn scenario.
+            particles[i].x += velocity * delta_t * std::cos(particles[i].theta);
+            particles[i].y += velocity * delta_t * std::sin(particles[i].theta);
+        } else {
+            // If yaw_rate is non-zero.
+            double thetaf = particles[i].theta + yaw_rate * delta_t;
+            particles[i].x += velocity / yaw_rate * (std::sin(thetaf) - std::sin(particles[i].theta));
+            particles[i].y += velocity / yaw_rate * (std::cos(particles[i].theta) - std::cos(thetaf));
+            particles[i].theta = thetaf;
+        }
+        std::normal_distribution<double> dist_x(particles[i].x, std_pos[0]);
+        std::normal_distribution<double> dist_y(particles[i].y, std_pos[1]);
+        std::normal_distribution<double> dist_theta(particles[i].theta, std_pos[2]);
+        particles[i].x = dist_x(gen);
+        particles[i].y = dist_y(gen);
+        particles[i].theta = dist_theta(gen);
+   }
 }
 
 void ParticleFilter::dataAssociation(vector<LandmarkObs> predicted, 
@@ -56,6 +100,23 @@ void ParticleFilter::dataAssociation(vector<LandmarkObs> predicted,
    *   probably find it useful to implement this method and use it as a helper 
    *   during the updateWeights phase.
    */
+   for (auto& observation : observations)
+   {
+       observation.id = -1;
+       double minDist = std::numeric_limits<double>::max();
+       for (auto landmark : predicted)
+       {
+           // Find distance and find predicted landmark that is closest this observation.
+		   // Update Id to nearest Id. This will be use later to update weight.
+           double distance = dist(landmark.x, landmark.y, observation.x, observation.y);
+           if (distance < minDist)
+           {
+               observation.id = landmark.id;
+               minDist = distance;
+           }
+       }
+   }
+}
 
 }
 
