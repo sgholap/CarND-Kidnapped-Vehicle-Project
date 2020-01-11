@@ -118,8 +118,14 @@ void ParticleFilter::dataAssociation(vector<LandmarkObs> predicted,
    }
 }
 
+static double multiVariant(double x, double y, double mux, double muy, double sigmax, double sigmay)
+{
+    double xTerm = std::pow((x - mux), 2) / 2 / std::pow(sigmax, 2);
+    double yTerm = std::pow((y - muy), 2) / 2 / std::pow(sigmay, 2);
+    double constantFactor = 2* M_PI * sigmax * sigmay;
+    
+    return (std::exp(-(xTerm + yTerm)) / constantFactor);
 }
-
 void ParticleFilter::updateWeights(double sensor_range, double std_landmark[], 
                                    const vector<LandmarkObs> &observations, 
                                    const Map &map_landmarks) {
@@ -136,7 +142,63 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
    *   and the following is a good resource for the actual equation to implement
    *   (look at equation 3.33) http://planning.cs.uiuc.edu/node99.html
    */
+   // Iterate over each particle
+   for (auto i = 0; i < num_particles; i++) {
+       particles[i].weight  = 1;
+       // Sensor Range check. Check landmark is within sensor range to particle
+       vector<LandmarkObs> predictedLandmark;
+       for (auto landmark : map_landmarks.landmark_list)
+       {
+           if (dist(particles[i].x, particles[i].y, landmark.x_f, landmark.y_f) <= sensor_range)
+           {
+               LandmarkObs ld;
+               ld.id = landmark.id_i;
+               ld.x = landmark.x_f;
+               ld.y = landmark.y_f;
+               predictedLandmark.push_back(ld);
+           }
+       }
 
+       // Transformation : Transform from car coordinate(observations) to map coordinate (particles are in map coordinate
+       // using homogeneous equation.
+       vector<LandmarkObs> observationsInMap(observations);
+
+       for (auto& observation : observationsInMap)
+       {
+            double x = particles[i].x +
+                    (observation.x * std::cos(particles[i].theta) - observation.y * std::sin(particles[i].theta));
+            observation.y = particles[i].y +
+                    (observation.x * std::sin(particles[i].theta) + observation.y * std::cos(particles[i].theta));
+            observation.x = x;
+       }
+       
+       //Association: Associate observation point to nearest neighbor. ( Update id of observations);
+       dataAssociation(predictedLandmark, observationsInMap);
+       
+       // Find measurement probability for observation
+       double mux = 0;
+       double muy = 0;
+       for (auto& observation : observationsInMap)
+       {
+           if ( observation.id == -1)
+           {
+               // If no landmark is in sensor range. What to do?
+               // Ignore it.
+               continue;
+           }
+           for (auto& ld : predictedLandmark)
+           {
+               if (observation.id == ld.id)
+               {
+                   mux = ld.x;
+                   muy = ld.y;
+                   break;
+               }
+           }
+           // multiVariant distribution to update weight.
+           particles[i].weight *= multiVariant(observation.x, observation.y, mux, muy, std_landmark[0], std_landmark[1]);
+       }
+   }
 }
 
 void ParticleFilter::resample() {
@@ -146,7 +208,35 @@ void ParticleFilter::resample() {
    * NOTE: You may find std::discrete_distribution helpful here.
    *   http://en.cppreference.com/w/cpp/numeric/random/discrete_distribution
    */
+    vector<Particle> resample_particles;
+    std::random_device rd;
+    std::default_random_engine gen(rd());
+    weights.clear();
+    for (auto i = 0; i < num_particles; i++) {
+        weights.push_back(particles[i].weight);
+    }
 
+    // Implement re-sampling wheel.
+    // Initialize wheel
+    std::uniform_int_distribution<int> intDist(0, num_particles - 1);
+    auto index = intDist(gen);
+    
+    // Find max element of vector weight
+    double max_weight = *max_element(weights.begin(), weights.end());
+    std::uniform_real_distribution<double> realDist(0.0, max_weight);
+    
+    double beta = 0.0;
+    for (auto i = 0; i < num_particles; i++)
+    {
+        beta += realDist(gen) * 2.0;
+        while (beta > weights[index])
+        {
+            beta -= weights[index];
+            index = (index + 1) % num_particles;
+        }
+        resample_particles.push_back(particles[index]);
+    }
+    particles = resample_particles;
 }
 
 void ParticleFilter::SetAssociations(Particle& particle, 
